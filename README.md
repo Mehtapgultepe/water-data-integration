@@ -1,40 +1,48 @@
 # Türkiye Su Şeffaflık Platformu - Veri Entegrasyonu
 
-Bu proje, İBB Açık Veri Portalı üzerinden sağlanan İSKİ baraj doluluk oranları verilerini standart bir şemaya normalize eden, veri kalitesi kurallarını uygulayan ve çıktıları bir SQLite veritabanında depolayan hafif bir Python veri entegrasyon hattıdır (pipeline).
+İBB Açık Veri Portalı'ndaki İSKİ baraj doluluk verisini standart şemaya çeviren, kalite kurallarını uygulayan ve SQLite'a yazan hafif bir Python hattı. Harici kütüphane gerekmez.
 
----
+## Kaynak
 
-## 1. Kaynak Seçimi ve Gerekçesi
-* **Seçilen Kaynak:** İBB Açık Veri Portalı – İstanbul Barajları Günlük Doluluk Oranları
-* **Kaynak Bağlantısı:** https://data.ibb.gov.tr/dataset/iski-baraj-doluluk-oranlari
-* **Seçim Gerekçesi:** 
-  * Resmi ve kamuya açık bir veri seti olması.
-  * API anahtarı veya karmaşık yetkilendirme gerektirmeden erişilebilir olması.
-  * Sayısal aralık kontrolü (0-100), eksik veri tespiti, tarih ayrıştırma ve mükerrer kayıt (deduplication) kurallarını test etmek için ideal bir zaman serisi yapısı sunması.
-* **Alternatif Kaynak Analizi:** Su kalitesi ve arıtma analiz raporları da değerlendirilmiştir; ancak farklı parametrelerin (pH, bulanıklık vb.) farklı ölçüm birimlerine ve geçerlilik aralıklarına sahip olması nedeniyle, case çalışmasının kapsamına en uygun ve tutarlı veri seti olarak baraj doluluk oranları tercih edilmiştir.
+- **Veri seti:** [İstanbul Barajları Günlük Doluluk Oranları](https://data.ibb.gov.tr/dataset/istanbul-barajlari-gunluk-doluluk-oranlari) (İBB Açık Veri Lisansı)
+- **Neden:** Resmi, anahtarsız erişilebilir; 0-100 aralığı, eksik değer, tarih ve mükerrer kontrolleri için uygun bir zaman serisi.
+- **Güncellik:** Portaldaki veri seti en son 1 Mart 2024'te güncellenmiş; en yeni kayıt 19 Şubat 2024. Güncel oranlar için [İSKİ baraj sayfasına](https://www.iski.gov.tr/web/tr-TR/baraj-doluluk) bakın.
 
----
+## Çalıştırma
 
-## 2. Şema Eşleme (Schema Mapping)
+```
+python3 main.py            # önce portal API'si, olmazsa fixtures/raw_data.json
+python3 main.py --fixture  # yalnızca fixture (çevrimdışı)
+```
 
-| Hedef Alan (Target Field) | Kaynak Karşılığı | Örnek Değer | Açıklama |
-| :--- | :--- | :--- | :--- |
-| `source_name` | Sabit Değer | `İBB İSKİ Baraj Doluluk Oranları` | Verinin ait olduğu resmi kaynak/kurum adı. |
-| `source_url` | Sabit Değer | `https://data.ibb.gov.tr/...` | Veri seti portal bağlantısı. |
-| `fetched_at` | Çalışma Anı (UTC) | `2026-09-01T09:45:00Z` | Verinin sisteme çekildiği ISO zaman damgası. |
-| `observed_at` | `Tarih` sütunu | `2026-08-31T00:00:00` | Ölçümün yapıldığı tarih ve saat. |
-| `location` | Sabit Değer | `İstanbul` | Ölçüm yapılan il/bölge. |
-| `entity_name` | Sütun Başlığı | `Omerli` | Ölçümün ait olduğu baraj adı. |
-| `metric_type` | Sabit Değer | `dam_occupancy_rate` | Ölçülen metriğin türü. |
-| `value` | Baraj Hücre Değeri | `65.25` | Yüzde formatına dönüştürülmüş sayısal oran. |
-| `unit` | Sabit Değer | `%` | Ölçüm birimi. |
+Çıktı: `data/water_data.db` (`water_metrics` tablosu) ve konsolda özet rapor.
 
----
+## Şema
 
-## 3. Kurulum ve Çalıştırma
+| Alan | Değer |
+| --- | --- |
+| `source_name`, `source_url` | Sabit; kurum ve veri seti bağlantısı |
+| `fetched_at` | API'den okunduysa okuma anı (UTC); fixture'dan okunduysa dosyanın değişme zamanı |
+| `observed_at` | `Tarih` sütunu |
+| `location` | `Istanbul` |
+| `entity_name` | Sütun başlığı (baraj adı) |
+| `metric_type` / `unit` | `dam_occupancy_rate` / `%` |
+| `value` | 0-100 arası doluluk |
 
-Proje harici hiçbir üçüncü parti kütüphaneye (`pip install ...`) ihtiyaç duymaz. Sadece standart Python 3 kütüphaneleri (`json`, `sqlite3`, `os`, `datetime`) ile çalışır.
+## Kalite kuralları
 
-```bash
-# Projeyi çalıştırmak için:
-python3 main.py
+- `Tarih` boş veya değer boşsa kayıt atlanır.
+- Ham değerler satır bazında ölçeklenir: satırdaki tüm değerler 1'i geçmiyorsa kesir sayılıp 100 ile çarpılır, geçen bir değer varsa satır zaten yüzdedir (kaynakta iki biçim de var).
+- Sonuç 0-100 dışındaysa veya sayı değilse atlanır.
+- Tarihi sıradan çıkan ama gün/ay yer değişince sıraya oturan satırlar düzeltilir (kaynakta Nisan-Ağustos 2023 arası böyle satırlar var).
+- Aynı baraj ve tarih için tek kayıt tutulur.
+- En yeni kayıt 30 günden eskiyse rapor uyarı verir.
+
+## Frontend
+
+```
+python3 main.py            # veritabanını ve data/report.json'u üretir
+python3 build_frontend.py  # frontend/index.html üretir
+```
+
+`frontend/index.html` tek dosyadır, veri içine gömülüdür; çift tıklayıp tarayıcıda açılır. Görünümü değiştirmek için `frontend/template.html` düzenlenir, sonra `build_frontend.py` yeniden çalıştırılır.
